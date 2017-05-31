@@ -21,7 +21,7 @@ module Fluent
     config_param :docker_partials_file, :string, default: nil
 
     # To avoid memory leak, old partial messages will be dropped upon exceeding configured timeout
-    config_param :docker_partials_cleanup_retention_time, :time, default: 30
+    config_param :docker_partials_cleanup_retention_time, :time, default: 60
 
     # Cleanup will be started with defined probability (float 0 <= p <= 1) for each journald message
     config_param :docker_partials_cleanup_probability, :float, default: 0.01
@@ -144,20 +144,25 @@ module Fluent
         end
       end
       # Run cleanup with specified probability
-      docker_partials_cleanup if rand <= @docker_partials_cleanup_probability
+      docker_partials_cleanup(entry) if rand <= @docker_partials_cleanup_probability
       # Persist buffer to file
       @partials_writer.update(Marshal::dump(@partials)) if updated
       result
     end
 
     # Cleans up partial message buffer
-    def docker_partials_cleanup
+    def docker_partials_cleanup(last_entry)
       log.debug("Executing docker partial logs cleanup")
+      last_entry_time = last_entry['_SOURCE_REALTIME_TIMESTAMP'] || last_entry['SOURCE_REALTIME_TIMESTAMP']
+      last_entry_time = last_entry_time.to_i
       @partials.each do |id, entry|
         entry_time = entry['_SOURCE_REALTIME_TIMESTAMP'] || entry['SOURCE_REALTIME_TIMESTAMP']
-        delta = Time.now.to_i - (entry_time.to_i / 1000000)
+        # Calculate difference between partial message time and last message time
+        # If delta is big, this is indication that partial message is sitting in buffer too long
+        # and there will be no non-partial "closing" message from the same container
+        delta = (last_entry_time - entry_time.to_i) / 1000000
         if delta > @docker_partials_cleanup_retention_time
-          log.warn("Dropping docker partial message (event age=#{delta}, timeout=#{@docker_partials_cleanup_retention_time}): #{entry}")
+          log.warn("Dropping docker partial message (delta=#{delta}, timeout=#{@docker_partials_cleanup_retention_time}): #{entry}")
           @partials.delete(id)
         end
       end
