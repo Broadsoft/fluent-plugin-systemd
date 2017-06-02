@@ -152,6 +152,7 @@ module Fluent
 
     # Cleans up partial message buffer
     def docker_partials_cleanup(last_entry)
+      return if @partials.empty?
       log.debug("Executing docker partial logs cleanup")
       last_entry_time = last_entry['_SOURCE_REALTIME_TIMESTAMP'] || last_entry['SOURCE_REALTIME_TIMESTAMP']
       last_entry_time = last_entry_time.to_i
